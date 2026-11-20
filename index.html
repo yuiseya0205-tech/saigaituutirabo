@@ -8,6 +8,7 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="https://unpkg.com/html5-qrcode"></script>
 <style>
 *{box-sizing:border-box}
 body{margin:0;background:#0b1220;color:white;font-family:Arial,sans-serif}
@@ -180,6 +181,13 @@ main{padding:13px;max-width:950px;margin:auto}
 <h3>QRから友達追加</h3>
 <input id="qrText" placeholder="QRコードの内容を入力">
 <button onclick="addFriendFromQR()">友達追加</button>
+</div>
+<div class="card">
+<h3>📷 QRコードをスキャン</h3>
+<div id="qr-reader" style="width:100%;max-width:450px;margin:auto"></div>
+<p id="qr-scan-status" class="muted">カメラを起動してください。</p>
+<button onclick="startQRScan()">📷 スキャン開始</button>
+<button onclick="stopQRScan()">停止</button>
 </div>
 </section>
 
@@ -359,6 +367,31 @@ loadRadar();
 
 <script>
 const $=id=>document.getElementById(id);
+let qrScanner=null,qrScanBusy=false;
+window.startQRScan=async()=>{
+if(typeof Html5Qrcode==="undefined"){$("qr-scan-status").textContent="QRライブラリを読み込めません";return}
+try{
+if(qrScanner){try{if(qrScanner.isScanning)await qrScanner.stop();qrScanner.clear()}catch(e){}}
+qrScanner=new Html5Qrcode("qr-reader");
+const cameras=await Html5Qrcode.getCameras();
+if(!cameras.length)throw Error("カメラが見つかりません");
+const camera=cameras.find(c=>/back|rear|environment/i.test(c.label))||cameras[cameras.length-1];
+qrScanBusy=false;
+await qrScanner.start(camera.id,{fps:10,qrbox:{width:230,height:230}},async decoded=>{
+if(qrScanBusy)return;
+qrScanBusy=true;
+let uid=decoded.trim();
+if(uid.startsWith("SAIGAI-LAB:"))uid=uid.substring(11);
+$("qr-scan-status").textContent="読み取り成功。友達追加中...";
+try{await window.scanFriendUid(uid)}catch(e){$("qr-scan-status").textContent="追加に失敗しました: "+e.message;qrScanBusy=false}
+await window.stopQRScan();
+},()=>{});
+$("qr-scan-status").textContent="QRコードをカメラに映してください";
+}catch(e){$("qr-scan-status").textContent="カメラ起動エラー: "+e.message}
+};
+window.stopQRScan=async()=>{
+if(qrScanner){try{if(qrScanner.isScanning)await qrScanner.stop();qrScanner.clear()}catch(e){}qrScanner=null}
+};
 let current=null,shelters=[],map=null,userMarker=null,routeLayer=null,shelterMarkers=[],nearest=null;
 
 function initMap(){
@@ -513,6 +546,7 @@ const app=initializeApp(firebaseConfig);
 const auth=getAuth(app);
 const db=getFirestore(app);
 let user=null,friends={},selectedFriend=null,unsubscribeMessages=null,unsubscribeFriends=null,unsubscribeSafety=null;
+let friendProfileUnsubs={};
 let displayName="";
 
 onAuthStateChanged(auth,async u=>{
@@ -564,7 +598,11 @@ window.addFriendByUid=async()=>registerFriend($("friendUid").value.trim());
 window.addFriendFromQR=async()=>{
 let v=$("qrText").value.trim();
 if(v.startsWith("SAIGAI-LAB:"))v=v.substring(11);
-registerFriend(v);
+await registerFriend(v);
+};
+window.scanFriendUid=async uid=>{
+await registerFriend(uid);
+$("qr-scan-status").textContent="友達追加完了！";
 };
 
 async function registerFriend(uid){
@@ -582,23 +620,46 @@ alert("友達を追加しました");
 
 function loadFriends(){
 unsubscribeFriends=onSnapshot(collection(db,"users",user.uid,"friends"),s=>{
-friends={};
-$("friendList").innerHTML="";
-$("chatFriend").innerHTML='<option value="">友達を選択</option>';
+const active=new Set();
 s.forEach(d=>{
 const f=d.data();
+active.add(f.uid);
 friends[f.uid]=f;
+if(!friendProfileUnsubs[f.uid]){
+friendProfileUnsubs[f.uid]=onSnapshot(doc(db,"users",f.uid),profile=>{
+if(profile.exists()){
+friends[f.uid]={...friends[f.uid],name:profile.data().name||"ユーザー"};
+renderFriends();
+if(selectedFriend===f.uid&&$("chatFriend").value===f.uid)renderChatFriendName();
+}
+});
+}
+});
+Object.keys(friendProfileUnsubs).forEach(uid=>{
+if(!active.has(uid)){friendProfileUnsubs[uid]();delete friendProfileUnsubs[uid];delete friends[uid];}
+});
+renderFriends();
+});
+}
+function renderFriends(){
+$("friendList").innerHTML="";
+$("chatFriend").innerHTML='<option value="">友達を選択</option>';
+Object.values(friends).forEach(f=>{
 const el=document.createElement("div");
 el.style.padding="12px";
-el.textContent="👤 "+f.name;
+el.textContent="👤 "+(f.name||"ユーザー");
 $("friendList").append(el);
 const op=document.createElement("option");
 op.value=f.uid;
-op.textContent=f.name;
+op.textContent=f.name||"ユーザー";
 $("chatFriend").append(op);
 });
-if(!s.size)$("friendList").textContent="友達はいません";
-});
+if(!Object.keys(friends).length)$("friendList").textContent="友達はいません";
+}
+function renderChatFriendName(){
+const name=friends[selectedFriend]?.name||"友達";
+const option=[...$("chatFriend").options].find(x=>x.value===selectedFriend);
+if(option)option.textContent=name;
 }
 
 window.openChat=()=>{
@@ -614,7 +675,7 @@ s.forEach(d=>{
 const m=d.data(),el=document.createElement("div");
 el.className="msg "+(m.sender===user.uid?"mine":"");
 const n=document.createElement("b");
-n.textContent=m.sender===user.uid?"自分":"友達";
+n.textContent=m.sender===user.uid?displayName:(friends[selectedFriend]?.name||"友達");
 const t=document.createElement("div");
 t.textContent=m.text;
 el.append(n,t);
