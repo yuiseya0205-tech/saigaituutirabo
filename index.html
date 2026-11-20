@@ -1,6 +1,503 @@
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>災害通知ラボ</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b1220;color:white;font-family:Arial,sans-serif}
+header{background:#14243a;padding:17px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100}
+h1{font-size:19px;margin:0}
+h2{font-size:20px}
+button{border:0;border-radius:10px;padding:12px;background:#2878ee;color:white;font-weight:bold;cursor:pointer;margin:3px}
+input,select{width:100%;padding:13px;border-radius:10px;border:1px solid #34445b;background:#18263a;color:white;margin:6px 0}
+nav{display:flex;gap:4px;padding:9px;background:#111c2d;overflow-x:auto;position:sticky;top:54px;z-index:90}
+nav button{white-space:nowrap;background:#26364d}
+nav button.active{background:#2878ee}
+main{padding:13px;max-width:950px;margin:auto}
+.page{display:none}
+.page.active{display:block}
+.card{background:#17263a;border:1px solid #293c56;border-radius:15px;padding:15px;margin-bottom:13px}
+.muted{color:#9fb0c7;font-size:13px}
+#map{height:55vh;min-height:350px;border-radius:14px;z-index:1}
+#qrcode{background:white;padding:15px;width:230px;height:230px;margin:15px auto;display:flex;align-items:center;justify-content:center;border-radius:8px}
+#qrcode img,#qrcode canvas{max-width:200px!important;max-height:200px!important}
+#messages{height:40vh;overflow:auto;background:#101c2d;border-radius:12px;padding:10px}
+.msg{max-width:82%;background:#263c59;padding:10px;border-radius:13px;margin:8px 0;overflow-wrap:anywhere}
+.mine{background:#1769bd;margin-left:auto}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.badge{background:#344b68;padding:5px 9px;border-radius:20px;font-size:12px}
+.big{font-size:25px;font-weight:bold}
+.green{color:#4de0a0}
+.orange{color:#ffb347}
+.red{color:#ff5555}
+.weatherGrid{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}
+.weatherBox{background:#20334b;border-radius:12px;padding:13px}
+.weatherValue{font-size:23px;font-weight:bold;margin-top:8px}
+#chatInput{display:flex;gap:5px}
+#chatInput input{margin:0}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:#17263a;color:white}
+.leaflet-popup-content{font-size:14px}
+.full{width:100%}
+</style>
+</head>
+<body>
+<header>
+<h1 id="appTitle">🌏 災害通知ラボ</h1>
+<span id="connection" class="badge">接続中</span>
+</header>
+<nav>
+<button class="active" onclick="showPage('home',this)">速報</button>
+<button onclick="showPage('weatherPage',this)">雨雲・雪</button>
+<button onclick="showPage('mapPage',this)">避難場所</button>
+<button onclick="showPage('friends',this)">友達</button>
+<button onclick="showPage('qr',this)">QRコード</button>
+<button onclick="showPage('chat',this)">チャット</button>
+<button onclick="showPage('safety',this)">安否確認</button>
+<button onclick="showPage('settings',this)">設定</button>
+</nav>
+<main>
+
+<section id="home" class="page active">
+<div class="card">
+<b>🌐 災害情報</b>
+<p class="muted" id="lastUpdate">情報取得中...</p>
+</div>
+<div id="alerts"></div>
+<div class="card">
+<b>⚠️ 防災情報</b>
+<p class="muted">避難指示・警報は自治体や気象庁の公式情報を優先してください。</p>
+<button onclick="window.open('https://www.jma.go.jp/bosai/warning/','_blank')">気象庁の警報を見る</button>
+</div>
+</section>
+
+<section id="weatherPage" class="page">
+<div class="card">
+<div class="row">
+<h2>🌧️ 雨雲・雪レーダー</h2>
+<span class="badge green" id="weatherStatus">待機中</span>
+</div>
+<p class="muted">現在地を取得して周辺の天気を表示します。</p>
+<button onclick="getWeatherLocation()">📍 現在地の天気</button>
+<button onclick="refreshWeather()">🔄 更新</button>
+<button onclick="toggleRadar()">🌧️ 雨雲表示切替</button>
+<button onclick="toggleSnowRadar()">❄️ 雪表示切替</button>
+</div>
+
+<div class="card">
+<div class="weatherGrid">
+<div class="weatherBox">
+<div>🌡️ 気温</div>
+<div class="weatherValue" id="temperature">--℃</div>
+</div>
+<div class="weatherBox">
+<div>🌧️ 現在の降水量</div>
+<div class="weatherValue" id="rainAmount">-- mm</div>
+</div>
+<div class="weatherBox">
+<div>💧 降水確率</div>
+<div class="weatherValue" id="rainProbability">--%</div>
+</div>
+<div class="weatherBox">
+<div>❄️ 降雪量</div>
+<div class="weatherValue" id="snowAmount">-- cm</div>
+</div>
+<div class="weatherBox">
+<div>🏔️ 積雪深</div>
+<div class="weatherValue" id="snowDepth">-- cm</div>
+</div>
+<div class="weatherBox">
+<div>💨 風速</div>
+<div class="weatherValue" id="windSpeed">-- km/h</div>
+</div>
+</div>
+</div>
+
+<div class="card">
+<h3>🌧️ 雨の強さ</h3>
+<div class="big" id="rainStrength">データ取得待ち</div>
+<p class="muted" id="rainDescription">現在地の天気を取得してください。</p>
+</div>
+
+<div class="card">
+<h3>❄️ 雪の状況</h3>
+<div class="big" id="snowStrength">データ取得待ち</div>
+<p class="muted" id="snowDescription">降雪量・積雪深を確認します。</p>
+</div>
+
+<div class="card">
+<h3>🕒 今後の天気</h3>
+<div id="hourlyWeather" class="muted">天気情報を取得してください。</div>
+</div>
+
+<div class="card">
+<h3>🗺️ 雨雲レーダー</h3>
+<div id="weatherMap" style="height:420px;border-radius:12px"></div>
+<p class="muted">レーダー画像提供：<a href="https://www.rainviewer.com/" target="_blank" style="color:#75b8ff">RainViewer</a></p>
+<p class="muted">予測ではなく取得できたレーダー画像を表示します。地域によってデータがない場合があります。</p>
+</div>
+
+<div class="card">
+<h3>🌏 気象庁の情報</h3>
+<button onclick="window.open('https://www.jma.go.jp/bosai/nowc/','_blank')">気象庁の雨雲レーダー</button>
+<button onclick="window.open('https://www.jma.go.jp/bosai/warning/','_blank')">警報・注意報</button>
+<button onclick="window.open('https://www.jma.go.jp/bosai/','_blank')">防災情報一覧</button>
+</div>
+</section>
+
+<section id="mapPage" class="page">
+<div class="card">
+<div class="row"><b>🆘 周辺の避難場所</b><span class="badge green" id="gpsStatus">GPS未取得</span></div>
+<button onclick="findShelters()">📍 避難場所を検索</button>
+<button onclick="locateMe()">現在地を再取得</button>
+</div>
+<div id="map"></div>
+<div class="card"><b>⭐ 一番近い避難場所</b><div id="nearest">現在地を取得してください。</div></div>
+<div class="card"><b>🧭 避難ルート</b><div id="routeInfo" class="muted">避難場所を検索してください。</div><button onclick="routeNearest()">徒歩ルートを表示</button></div>
+<div class="card"><b>📍 周辺の避難場所一覧</b><div id="shelterList" class="muted">未検索</div></div>
+<div class="card"><p class="muted">避難場所情報はOpenStreetMapの登録データに依存します。自治体の公式情報も確認してください。</p></div>
+</section>
+
+<section id="friends" class="page">
+<div class="card"><h3>👥 友達</h3><div id="friendList"></div></div>
+<div class="card"><input id="friendUid" placeholder="相手のユーザーID"><button onclick="addFriendByUid()">友達追加</button></div>
+</section>
+
+<section id="qr" class="page">
+<div class="card">
+<h3>📱 自分のQRコード</h3>
+<div id="qrcode">ログイン待機中</div>
+<p id="myUid" style="overflow-wrap:anywhere"></p>
+<button onclick="generateMyQR()">QRコード再生成</button>
+<button onclick="copyUid()">IDをコピー</button>
+</div>
+<div class="card">
+<h3>QRから友達追加</h3>
+<input id="qrText" placeholder="QRコードの内容を入力">
+<button onclick="addFriendFromQR()">友達追加</button>
+</div>
+</section>
+
+<section id="chat" class="page">
+<div class="card"><h3>💬 チャット</h3><select id="chatFriend" onchange="openChat()"><option value="">友達を選択</option></select></div>
+<div id="messages"></div>
+<div id="chatInput"><input id="messageText" placeholder="メッセージ" onkeydown="if(event.key==='Enter')sendMessage()"><button onclick="sendMessage()">送信</button></div>
+</section>
+
+<section id="safety" class="page">
+<div class="card">
+<h3>🆘 安否確認</h3>
+<button onclick="sendSafety('無事です')">✅ 無事です</button>
+<button onclick="sendSafety('避難中です')">🏃 避難中です</button>
+<button style="background:#b92735" onclick="sendSafety('助けてください')">🆘 助けて</button>
+</div>
+<div class="card"><h3>📍 位置情報共有</h3><button onclick="shareLocation()">現在地を友達に送信</button></div>
+<div class="card"><h3>安否一覧</h3><div id="safetyList"></div></div>
+</section>
+
+<section id="settings" class="page">
+<div class="card">
+<h2>⚙️ アプリ設定</h2>
+<label>アプリ名</label>
+<input id="appNameInput" placeholder="災害通知ラボ">
+<button onclick="saveAppName()">アプリ名を変更</button>
+</div>
+<div class="card">
+<h3>👤 自分の表示名</h3>
+<input id="displayNameInput" placeholder="表示名">
+<button onclick="saveDisplayName()">表示名を保存</button>
+</div>
+<div class="card">
+<h3>🔔 通知設定</h3>
+<button onclick="enableNotifications()">ブラウザ通知を許可</button>
+<p class="muted" id="notificationStatus">通知設定を確認してください。</p>
+</div>
+<div class="card">
+<h3>📡 データ提供元</h3>
+<p class="muted">Open-Meteo / RainViewer / OpenStreetMap / 気象庁</p>
+</div>
+</section>
+</main>
+
+<script>
+let weatherMap=null,radarLayer=null,weatherMarker=null;
+let weatherPosition=null,radarVisible=true,snowRadar=false;
+let weatherTimer=null;
+
+window.showPage=(id,b)=>{
+document.querySelectorAll(".page").forEach(x=>x.classList.remove("active"));
+document.querySelectorAll("nav button").forEach(x=>x.classList.remove("active"));
+document.getElementById(id).classList.add("active");
+b.classList.add("active");
+if(id==="mapPage")setTimeout(()=>{initMap();if(map)map.invalidateSize()},150);
+if(id==="weatherPage"){
+setTimeout(()=>{
+initWeatherMap();
+if(weatherMap)weatherMap.invalidateSize();
+if(weatherPosition)refreshWeather();
+},150);
+}
+if(id==="qr"&&window.currentUser)generateMyQR();
+};
+
+function initWeatherMap(){
+if(weatherMap)return;
+weatherMap=L.map("weatherMap").setView([36.2,136.2],6);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap"}).addTo(weatherMap);
+}
+
+window.getWeatherLocation=()=>{
+if(!navigator.geolocation)return alert("GPSに対応していません");
+$("weatherStatus").textContent="位置取得中...";
+navigator.geolocation.getCurrentPosition(async p=>{
+weatherPosition={lat:p.coords.latitude,lon:p.coords.longitude};
+initWeatherMap();
+weatherMap.setView([weatherPosition.lat,weatherPosition.lon],9);
+if(weatherMarker)weatherMarker.setLatLng([weatherPosition.lat,weatherPosition.lon]);
+else weatherMarker=L.marker([weatherPosition.lat,weatherPosition.lon]).addTo(weatherMap).bindPopup("現在地");
+await refreshWeather();
+},()=>alert("位置情報を取得できません。HTTPSまたはlocalhostで開いてください。"),{enableHighAccuracy:true,timeout:15000});
+};
+
+window.refreshWeather=async()=>{
+if(!weatherPosition)return window.getWeatherLocation();
+$("weatherStatus").textContent="取得中...";
+try{
+const lat=weatherPosition.lat,lon=weatherPosition.lon;
+const url="https://api.open-meteo.com/v1/forecast?latitude="+lat+"&longitude="+lon+"&current=temperature_2m,relative_humidity_2m,precipitation,rain,showers,snowfall,weather_code,wind_speed_10m&hourly=temperature_2m,precipitation_probability,precipitation,rain,snowfall,snow_depth,weather_code&forecast_days=2&timezone=Asia%2FTokyo";
+const r=await fetch(url);
+if(!r.ok)throw Error("天気APIエラー");
+const data=await r.json();
+const c=data.current,h=data.hourly;
+const rain=Number(c.rain||0)+Number(c.showers||0);
+const snow=Number(c.snowfall||0);
+const currentTime=c.time;
+const index=h.time.indexOf(currentTime);
+const i=index>=0?index:h.time.findIndex(t=>t>=currentTime);
+const probability=i>=0?h.precipitation_probability[i]:0;
+const depth=i>=0?h.snow_depth[i]:null;
+$("temperature").textContent=c.temperature_2m+"℃";
+$("rainAmount").textContent=rain+" mm";
+$("rainProbability").textContent=(probability??"--")+"%";
+$("snowAmount").textContent=snow+" cm";
+$("snowDepth").textContent=depth==null?"--":(Number(depth)*100).toFixed(1)+" cm";
+$("windSpeed").textContent=c.wind_speed_10m+" km/h";
+let strength="雨なし",desc="現在の降水量は少ない状態です。",cls="green";
+if(rain>0&&rain<1){strength="弱い雨";desc="傘が必要になる場合があります。"}
+else if(rain>=1&&rain<5){strength="普通の雨";desc="足元や道路の状況に注意してください。";cls="orange"}
+else if(rain>=5&&rain<10){strength="強い雨";desc="低い土地の浸水や河川の増水に注意してください。";cls="orange"}
+else if(rain>=10){strength="非常に強い雨";desc="危険な場所から離れ、自治体の避難情報を確認してください。";cls="red"}
+$("rainStrength").textContent=strength;
+$("rainStrength").className="big "+cls;
+$("rainDescription").textContent=desc+" 現在のモデル降水量: "+rain+" mm/h";
+if(snow>0){
+$("snowStrength").textContent="❄️ 降雪中";
+$("snowDescription").textContent="降雪量 "+snow+" cm/h。道路の凍結や積雪に注意してください。";
+}else if(Number(depth)>0){
+$("snowStrength").textContent="積雪あり";
+$("snowDescription").textContent="積雪深 "+(Number(depth)*100).toFixed(1)+" cm";
+}else{
+$("snowStrength").textContent="現在は降雪なし";
+$("snowDescription").textContent="取得した予報データでは降雪が確認されていません。";
+}
+$("hourlyWeather").innerHTML="";
+for(let j=Math.max(0,i);j<Math.min(h.time.length,Math.max(0,i)+12);j++){
+const box=document.createElement("div");
+box.style.padding="9px";
+box.style.borderBottom="1px solid #34445b";
+const time=h.time[j].slice(5,16).replace("T"," ");
+const snowValue=h.snowfall[j]||0;
+box.textContent=time+" | "+h.temperature_2m[j]+"℃ | 降水確率 "+(h.precipitation_probability[j]??"--")+"% | 雨 "+(h.rain[j]||0)+"mm | 雪 "+snowValue+"cm";
+$("hourlyWeather").append(box);
+}
+$("weatherStatus").textContent="更新済み";
+if(!weatherMap) initWeatherMap();
+if(!weatherMarker)weatherMarker=L.marker([lat,lon]).addTo(weatherMap).bindPopup("現在地");
+await loadRadar();
+}catch(e){
+$("weatherStatus").textContent="取得エラー";
+$("rainStrength").textContent="データ取得失敗";
+$("rainDescription").textContent=e.message;
+}
+};
+
+async function loadRadar(){
+try{
+const r=await fetch("https://api.rainviewer.com/public/weather-maps.json");
+if(!r.ok)throw Error();
+const data=await r.json();
+const frames=data.radar?.past||[];
+if(!frames.length)throw Error();
+const frame=frames[frames.length-1];
+const url=data.host+frame.path+"/256/{z}/{x}/{y}/2/"+(snowRadar?"1_1":"1_0")+".png";
+if(radarLayer)weatherMap.removeLayer(radarLayer);
+radarLayer=L.tileLayer(url,{opacity:.7,maxZoom:7,attribution:"Weather data © RainViewer"});
+if(radarVisible)radarLayer.addTo(weatherMap);
+}catch(e){
+$("weatherStatus").textContent="気象情報取得済み・レーダー取得失敗";
+}
+}
+
+window.toggleRadar=()=>{
+radarVisible=!radarVisible;
+if(!weatherMap)initWeatherMap();
+if(radarLayer){
+if(radarVisible)radarLayer.addTo(weatherMap);
+else weatherMap.removeLayer(radarLayer);
+}else loadRadar();
+};
+window.toggleSnowRadar=()=>{
+snowRadar=!snowRadar;
+loadRadar();
+};
+</script>
+
+<script>
+const $=id=>document.getElementById(id);
+let current=null,shelters=[],map=null,userMarker=null,routeLayer=null,shelterMarkers=[],nearest=null;
+
+function initMap(){
+if(map)return;
+map=L.map("map").setView([36.2,136.2],13);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"© OpenStreetMap contributors"}).addTo(map);
+}
+
+window.locateMe=()=>{
+if(!navigator.geolocation)return alert("GPSに対応していません");
+$("gpsStatus").textContent="位置取得中...";
+navigator.geolocation.getCurrentPosition(p=>{
+current={lat:p.coords.latitude,lon:p.coords.longitude};
+initMap();
+map.setView([current.lat,current.lon],15);
+if(userMarker)userMarker.setLatLng([current.lat,current.lon]);
+else userMarker=L.circleMarker([current.lat,current.lon],{radius:10,color:"#fff",weight:3,fillColor:"#1685ff",fillOpacity:1}).addTo(map).bindPopup("現在地");
+$("gpsStatus").textContent="GPS取得済み";
+},()=>{$("gpsStatus").textContent="GPSエラー";alert("HTTPSまたはlocalhostで開いてください")},{enableHighAccuracy:true,timeout:15000});
+};
+
+window.findShelters=async()=>{
+if(!current){window.locateMe();return}
+initMap();
+$("shelterList").textContent="検索中...";
+clearMap();
+const q=`[out:json][timeout:30];(nwr(around:10000,${current.lat},${current.lon})["emergency"="assembly_point"];nwr(around:10000,${current.lat},${current.lon})["emergency"="shelter"];nwr(around:10000,${current.lat},${current.lon})["amenity"="shelter"];);out center tags;`;
+try{
+const r=await fetch("https://overpass-api.de/api/interpreter?data="+encodeURIComponent(q));
+if(!r.ok)throw Error();
+const data=await r.json();
+shelters=data.elements.map(e=>{
+const lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;
+if(lat==null||lon==null)return null;
+return{id:e.id,lat,lon,name:e.tags?.name||e.tags?.["name:ja"]||"名称不明の避難場所",distance:distance(current.lat,current.lon,lat,lon)};
+}).filter(Boolean).sort((a,b)=>a.distance-b.distance);
+if(!shelters.length){$("shelterList").textContent="避難場所が見つかりません。自治体の公式避難所一覧を確認してください。";$("nearest").textContent="見つかりません";return}
+shelters.forEach((s,i)=>{
+const m=L.marker([s.lat,s.lon]).addTo(map);
+m.bindPopup("<b>"+escapeHTML(s.name)+"</b><br>直線距離 "+formatDistance(s.distance)+"<br><button onclick='selectShelter("+i+")'>ルート表示</button>");
+shelterMarkers.push(m);
+});
+nearest=shelters[0];
+showNearest();
+$("shelterList").innerHTML="";
+shelters.forEach((s,i)=>{
+const el=document.createElement("div");
+el.style.padding="12px";
+el.style.borderBottom="1px solid #34445b";
+const name=document.createElement("b");
+name.textContent=(i===0?"⭐ ":"🏠 ")+s.name;
+const d=document.createElement("p");
+d.className="muted";
+d.textContent="直線距離 "+formatDistance(s.distance);
+const b=document.createElement("button");
+b.textContent="道のりを表示";
+b.onclick=()=>selectShelter(i);
+el.append(name,d,b);
+$("shelterList").append(el);
+});
+map.fitBounds(L.latLngBounds([[current.lat,current.lon],...shelters.map(s=>[s.lat,s.lon])]),{padding:[25,25]});
+}catch(e){$("shelterList").textContent="検索できませんでした。時間をおいて再試行してください。"}
+};
+
+function clearMap(){
+shelterMarkers.forEach(m=>map.removeLayer(m));
+shelterMarkers=[];
+if(routeLayer){map.removeLayer(routeLayer);routeLayer=null}
+}
+
+function showNearest(){
+$("nearest").innerHTML="";
+const n=document.createElement("div");
+n.className="big green";
+n.textContent=nearest.name;
+const d=document.createElement("p");
+d.textContent="直線距離: "+formatDistance(nearest.distance);
+const b=document.createElement("button");
+b.textContent="⭐ 徒歩ルートを表示";
+b.onclick=()=>window.routeNearest();
+$("nearest").append(n,d,b);
+}
+
+window.selectShelter=i=>{nearest=shelters[i];showNearest();window.routeNearest()};
+
+function distance(a,b,c,d){
+const R=6371000,rad=x=>x*Math.PI/180;
+const x=Math.sin(rad(c-a)/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(rad(d-b)/2)**2;
+return 2*R*Math.asin(Math.sqrt(x));
+}
+function formatDistance(m){return m>=1000?(m/1000).toFixed(2)+" km":Math.round(m)+" m"}
+
+window.routeNearest=async()=>{
+if(!current||!nearest)return alert("先に避難場所を検索してください");
+$("routeInfo").textContent="ルート計算中...";
+if(routeLayer)map.removeLayer(routeLayer);
+try{
+const args={locations:[{lat:current.lat,lon:current.lon},{lat:nearest.lat,lon:nearest.lon}],costing:"pedestrian",units:"kilometers"};
+const r=await fetch("https://valhalla1.openstreetmap.de/route?json="+encodeURIComponent(JSON.stringify(args)));
+if(!r.ok)throw Error();
+const data=await r.json();
+if(!data.trip?.legs?.length)throw Error();
+const leg=data.trip.legs[0];
+const coords=decodePolyline(leg.shape,6);
+routeLayer=L.polyline(coords,{color:"#1685ff",weight:6,opacity:.9}).addTo(map);
+map.fitBounds(routeLayer.getBounds(),{padding:[35,35]});
+$("routeInfo").innerHTML="";
+const km=document.createElement("div");
+km.className="big green";
+km.textContent=data.trip.summary.length.toFixed(2)+" km";
+const time=document.createElement("p");
+time.textContent="徒歩の目安: 約"+Math.round(data.trip.summary.time/60)+"分";
+const dest=document.createElement("p");
+dest.className="muted";
+dest.textContent="目的地: "+nearest.name;
+$("routeInfo").append(km,time,dest);
+}catch(e){$("routeInfo").textContent="ルート取得に失敗しました。地図アプリで確認してください。"}
+};
+
+function decodePolyline(str,precision=6){
+let index=0,lat=0,lng=0,coords=[];
+while(index<str.length){
+let b,shift=0,result=0;
+do{b=str.charCodeAt(index++)-63;result|=(b&31)<<shift;shift+=5}while(b>=32);
+lat+=(result&1)?~(result>>1):(result>>1);
+shift=0;result=0;
+do{b=str.charCodeAt(index++)-63;result|=(b&31)<<shift;shift+=5}while(b>=32);
+lng+=(result&1)?~(result>>1):(result>>1);
+coords.push([lat/10**precision,lng/10**precision]);
+}
+return coords;
+}
+function escapeHTML(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+</script>
+
 <script type="module">
-import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
-import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
+import{initializeApp}from"https://www.gstatic.com/firebasejs/11.6.0/firebase-app.js";
+import{getAuth,signInAnonymously,onAuthStateChanged}from"https://www.gstatic.com/firebasejs/11.6.0/firebase-auth.js";
+import{getFirestore,doc,setDoc,getDoc,collection,addDoc,onSnapshot,query,orderBy,serverTimestamp,limit}from"https://www.gstatic.com/firebasejs/11.6.0/firebase-firestore.js";
 
 const firebaseConfig={
 apiKey:"AIzaSyCjmz-qD1_GyPe5xxfWwfd82P5Z0Fn7z00",
@@ -13,167 +510,223 @@ measurementId:"G-EYSDLYT964"
 };
 
 const app=initializeApp(firebaseConfig);
+const auth=getAuth(app);
 const db=getFirestore(app);
+let user=null,friends={},selectedFriend=null,unsubscribeMessages=null,unsubscribeFriends=null,unsubscribeSafety=null;
+let displayName="";
 
-const map=L.map("map").setView([35.9433,136.1881],13);
-
-L.tileLayer(
-"https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-{maxZoom:19}
-).addTo(map);
-
-let userLat=null;
-let userLng=null;
-let userMarker=null;
-let routeLine=null;
-
-const markers=[];
-
-navigator.geolocation.getCurrentPosition(p=>{
-userLat=p.coords.latitude;
-userLng=p.coords.longitude;
-
-userMarker=L.marker([userLat,userLng])
-.addTo(map)
-.bindPopup("現在地");
-
-map.setView([userLat,userLng],15);
+onAuthStateChanged(auth,async u=>{
+if(!u){
+$("connection").textContent="ログイン待機中";
+return;
+}
+user=u;
+window.currentUser=u;
+$("connection").textContent="接続済み";
+$("myUid").textContent="ID: "+u.uid;
+try{
+const userRef=doc(db,"users",u.uid);
+const snap=await getDoc(userRef);
+displayName=snap.exists()?snap.data().name||"ユーザー_"+u.uid.slice(0,5):"ユーザー_"+u.uid.slice(0,5);
+await setDoc(userRef,{uid:u.uid,name:displayName,updatedAt:serverTimestamp()},{merge:true});
+$("displayNameInput").value=displayName;
+generateMyQR();
+loadFriends();
+loadSafety();
+}catch(e){
+$("connection").textContent="DBエラー";
+$("qrcode").textContent=e.message;
+}
+});
+signInAnonymously(auth).catch(e=>{
+$("connection").textContent="ログインエラー";
+$("qrcode").textContent="ログインエラー: "+e.message;
 });
 
-window.addShelter=async function(){
-
-if(userLat===null)return;
-
-await addDoc(
-collection(db,"shelters"),
-{
-name:"避難所",
-lat:userLat,
-lng:userLng,
-created:Date.now()
-}
-);
-
+window.generateMyQR=()=>{
+const area=$("qrcode");
+area.innerHTML="";
+if(!user){area.textContent="ログイン待機中";return}
+if(typeof QRCode==="undefined"){area.textContent="QRライブラリ読み込み失敗";return}
+try{
+new QRCode(area,{text:"SAIGAI-LAB:"+user.uid,width:200,height:200,correctLevel:QRCode.CorrectLevel.H});
+$("myUid").textContent="ID: "+user.uid;
+}catch(e){area.textContent="QR生成エラー: "+e.message}
 };
 
-onSnapshot(
-collection(db,"shelters"),
-snap=>{
-
-markers.forEach(m=>map.removeLayer(m));
-markers.length=0;
-
-snap.forEach(doc=>{
-
-const s=doc.data();
-
-const marker=L.marker(
-[s.lat,s.lng]
-)
-.addTo(map)
-.bindPopup(s.name);
-
-markers.push(marker);
-
-});
-
-}
-);
-
-window.locateUser=function(){
-
-navigator.geolocation.getCurrentPosition(pos=>{
-
-userLat=pos.coords.latitude;
-userLng=pos.coords.longitude;
-
-if(userMarker){
-map.removeLayer(userMarker);
-}
-
-userMarker=L.marker(
-[userLat,userLng]
-)
-.addTo(map)
-.bindPopup("現在地");
-
-map.setView([userLat,userLng],15);
-
-});
-
+window.copyUid=async()=>{
+if(!user)return;
+try{await navigator.clipboard.writeText(user.uid);alert("コピーしました")}
+catch(e){prompt("ユーザーID",user.uid)}
 };
 
-function distance(lat1,lng1,lat2,lng2){
-
-const R=6371;
-
-const dLat=(lat2-lat1)*Math.PI/180;
-const dLng=(lng2-lng1)*Math.PI/180;
-
-const a=
-Math.sin(dLat/2)**2+
-Math.cos(lat1*Math.PI/180)*
-Math.cos(lat2*Math.PI/180)*
-Math.sin(dLng/2)**2;
-
-return R*2*Math.atan2(
-Math.sqrt(a),
-Math.sqrt(1-a)
-);
-
-}
-
-window.findNearest=function(){
-
-if(userLat===null)return;
-
-let nearest=null;
-let min=999999;
-
-markers.forEach(m=>{
-
-const p=m.getLatLng();
-
-const d=distance(
-userLat,
-userLng,
-p.lat,
-p.lng
-);
-
-if(d<min){
-min=d;
-nearest=p;
-}
-
-});
-
-if(!nearest)return;
-
-if(routeLine){
-map.removeLayer(routeLine);
-}
-
-routeLine=L.polyline(
-[
-[userLat,userLng],
-[nearest.lat,nearest.lng]
-],
-{
-color:"red",
-weight:5
-}
-).addTo(map);
-
-const walk=Math.round(min/5*60);
-
-document.getElementById("info").innerHTML=
-"距離:"+min.toFixed(2)+"km<br>徒歩:"+walk+"分";
-
+window.addFriendByUid=async()=>registerFriend($("friendUid").value.trim());
+window.addFriendFromQR=async()=>{
+let v=$("qrText").value.trim();
+if(v.startsWith("SAIGAI-LAB:"))v=v.substring(11);
+registerFriend(v);
 };
 
-document.getElementById("panel").insertAdjacentHTML(
-"beforeend",
-'<button onclick="addShelter()">避難所追加</button>'
-);
+async function registerFriend(uid){
+if(!user||!uid||uid===user.uid)return alert("IDを確認してください");
+try{
+const target=await getDoc(doc(db,"users",uid));
+if(!target.exists())return alert("ユーザーが見つかりません");
+await setDoc(doc(db,"users",user.uid,"friends",uid),{uid,name:target.data().name||"ユーザー"});
+await setDoc(doc(db,"users",uid,"friends",user.uid),{uid:user.uid,name:displayName});
+$("friendUid").value="";
+$("qrText").value="";
+alert("友達を追加しました");
+}catch(e){alert(e.message)}
+}
+
+function loadFriends(){
+unsubscribeFriends=onSnapshot(collection(db,"users",user.uid,"friends"),s=>{
+friends={};
+$("friendList").innerHTML="";
+$("chatFriend").innerHTML='<option value="">友達を選択</option>';
+s.forEach(d=>{
+const f=d.data();
+friends[f.uid]=f;
+const el=document.createElement("div");
+el.style.padding="12px";
+el.textContent="👤 "+f.name;
+$("friendList").append(el);
+const op=document.createElement("option");
+op.value=f.uid;
+op.textContent=f.name;
+$("chatFriend").append(op);
+});
+if(!s.size)$("friendList").textContent="友達はいません";
+});
+}
+
+window.openChat=()=>{
+const uid=$("chatFriend").value;
+if(!uid)return;
+selectedFriend=uid;
+if(unsubscribeMessages)unsubscribeMessages();
+const room=[user.uid,uid].sort().join("_");
+const q=query(collection(db,"rooms",room,"messages"),orderBy("createdAt"),limit(200));
+unsubscribeMessages=onSnapshot(q,s=>{
+$("messages").innerHTML="";
+s.forEach(d=>{
+const m=d.data(),el=document.createElement("div");
+el.className="msg "+(m.sender===user.uid?"mine":"");
+const n=document.createElement("b");
+n.textContent=m.sender===user.uid?"自分":"友達";
+const t=document.createElement("div");
+t.textContent=m.text;
+el.append(n,t);
+$("messages").append(el);
+});
+$("messages").scrollTop=$("messages").scrollHeight;
+});
+};
+
+window.sendMessage=async()=>{
+const t=$("messageText").value.trim();
+if(!t||!selectedFriend)return;
+$("messageText").value="";
+try{
+await addDoc(collection(db,"rooms",[user.uid,selectedFriend].sort().join("_"),"messages"),{sender:user.uid,text:t,createdAt:serverTimestamp()});
+}catch(e){alert(e.message);$("messageText").value=t}
+};
+
+window.sendSafety=async status=>{
+if(!user)return;
+try{
+await setDoc(doc(db,"users",user.uid),{safety:status,safetyAt:serverTimestamp()},{merge:true});
+await Promise.all(Object.keys(friends).map(uid=>addDoc(collection(db,"rooms",[user.uid,uid].sort().join("_"),"messages"),{sender:user.uid,text:"🆘 "+status,createdAt:serverTimestamp()})));
+alert("安否情報を送信しました");
+}catch(e){alert(e.message)}
+};
+
+window.shareLocation=()=>{
+navigator.geolocation.getCurrentPosition(async p=>{
+const text="📍 現在地 https://www.google.com/maps?q="+p.coords.latitude+","+p.coords.longitude;
+await Promise.all(Object.keys(friends).map(uid=>addDoc(collection(db,"rooms",[user.uid,uid].sort().join("_"),"messages"),{sender:user.uid,text,createdAt:serverTimestamp()})));
+alert("位置情報を送信しました");
+},()=>alert("位置情報を取得できません"));
+};
+
+function loadSafety(){
+unsubscribeSafety=onSnapshot(collection(db,"users"),s=>{
+$("safetyList").innerHTML="";
+s.forEach(d=>{
+if(d.id===user.uid||!d.data().safety)return;
+const el=document.createElement("div");
+el.style.padding="10px";
+el.textContent=(friends[d.id]?.name||d.data().name||"ユーザー")+": "+d.data().safety;
+$("safetyList").append(el);
+});
+});
+}
+
+window.saveDisplayName=async()=>{
+if(!user)return alert("ログインしてください");
+const name=$("displayNameInput").value.trim();
+if(!name)return alert("名前を入力してください");
+try{
+displayName=name;
+await setDoc(doc(db,"users",user.uid),{name,updatedAt:serverTimestamp()},{merge:true});
+alert("表示名を保存しました");
+}catch(e){alert(e.message)}
+};
+
+window.saveAppName=()=>{
+const name=$("appNameInput").value.trim();
+if(!name)return alert("アプリ名を入力してください");
+localStorage.setItem("disasterAppName",name);
+$("appTitle").textContent="🌏 "+name;
+document.title=name;
+alert("アプリ名を変更しました");
+};
+
+const savedName=localStorage.getItem("disasterAppName");
+if(savedName){
+$("appTitle").textContent="🌏 "+savedName;
+$("appNameInput").value=savedName;
+document.title=savedName;
+}
+
+window.enableNotifications=async()=>{
+if(!("Notification"in window))return alert("通知に対応していません");
+const result=await Notification.requestPermission();
+$("notificationStatus").textContent=result==="granted"?"通知が許可されました": "通知は許可されていません";
+};
+
+async function loadDisasters(){
+try{
+const r=await fetch("https://api.p2pquake.net/v2/history?codes=551&limit=10");
+if(!r.ok)throw Error();
+const data=await r.json();
+$("alerts").innerHTML="";
+data.reverse().forEach(item=>{
+const eq=item.earthquake||{},h=eq.hypocenter||{};
+const scale={10:"1",20:"2",30:"3",40:"4",45:"5弱",50:"5強",55:"6弱",60:"6強",70:"7"}[eq.maxScale]||"不明";
+const el=document.createElement("div");
+el.className="card";
+const title=document.createElement("b");
+title.textContent="🌋 地震速報 最大震度 "+scale;
+const name=document.createElement("div");
+name.className="big";
+name.textContent=h.name||"震源地不明";
+const detail=document.createElement("p");
+detail.textContent="M "+(eq.magnitude??"不明")+" / 深さ "+(h.depth??"不明")+" km";
+const time=document.createElement("div");
+time.className="muted";
+time.textContent=item.issue?.time||item.time||"";
+el.append(title,name,detail,time);
+$("alerts").append(el);
+});
+$("lastUpdate").textContent="最終更新: "+new Date().toLocaleString();
+}catch(e){$("lastUpdate").textContent="地震情報を取得できません"}
+}
+loadDisasters();
+setInterval(loadDisasters,60000);
+setInterval(()=>{if(weatherPosition)refreshWeather()},15*60*1000);
+if("Notification"in window&&Notification.permission==="default")Notification.requestPermission();
 </script>
+</body>
+</html>
