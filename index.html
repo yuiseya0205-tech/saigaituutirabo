@@ -1,64 +1,25 @@
-<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>災害避難支援</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-<style>
-html,body{
-margin:0;
-height:100%;
-font-family:sans-serif;
-}
-#map{
-height:100%;
-width:100%;
-}
-#panel{
-position:fixed;
-top:10px;
-left:10px;
-z-index:1000;
-background:white;
-padding:12px;
-border-radius:12px;
-box-shadow:0 0 10px rgba(0,0,0,.2);
-width:300px;
-}
-button{
-width:100%;
-padding:10px;
-margin-top:5px;
-cursor:pointer;
-}
-#info{
-margin-top:10px;
-font-size:14px;
-}
-</style>
-</head>
-<body>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-app.js";
+import { getFirestore, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/12.2.1/firebase-firestore.js";
 
-<div id="panel">
-<h3>災害避難支援</h3>
-<button onclick="locateUser()">現在地取得</button>
-<button onclick="findNearest()">最寄り避難所へ避難</button>
-<div id="info">待機中</div>
-</div>
+const firebaseConfig={
+apiKey:"AIzaSyCjmz-qD1_GyPe5xxfWwfd82P5Z0Fn7z00",
+authDomain:"saigaituutirabo.firebaseapp.com",
+projectId:"saigaituutirabo",
+storageBucket:"saigaituutirabo.firebasestorage.app",
+messagingSenderId:"367538792587",
+appId:"1:367538792587:web:9a3f5b9dc4e4271cce8c8e",
+measurementId:"G-EYSDLYT964"
+};
 
-<div id="map"></div>
+const app=initializeApp(firebaseConfig);
+const db=getFirestore(app);
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-<script>
-const map=L.map('map').setView([35.9433,136.1881],13);
+const map=L.map("map").setView([35.9433,136.1881],13);
 
 L.tileLayer(
-'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-{
-maxZoom:19
-}
+"https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+{maxZoom:19}
 ).addTo(map);
 
 let userLat=null;
@@ -66,71 +27,128 @@ let userLng=null;
 let userMarker=null;
 let routeLine=null;
 
-const shelters=[
-{name:"避難所A",lat:35.9460,lng:136.1900},
-{name:"避難所B",lat:35.9520,lng:136.1840},
-{name:"避難所C",lat:35.9390,lng:136.1740},
-{name:"避難所D",lat:35.9580,lng:136.1990}
-];
+const markers=[];
 
-shelters.forEach(s=>{
-L.marker([s.lat,s.lng]).addTo(map)
-.bindPopup("避難所<br>"+s.name);
+navigator.geolocation.getCurrentPosition(p=>{
+userLat=p.coords.latitude;
+userLng=p.coords.longitude;
+
+userMarker=L.marker([userLat,userLng])
+.addTo(map)
+.bindPopup("現在地");
+
+map.setView([userLat,userLng],15);
 });
 
-function locateUser(){
+window.addShelter=async function(){
+
+if(userLat===null)return;
+
+await addDoc(
+collection(db,"shelters"),
+{
+name:"避難所",
+lat:userLat,
+lng:userLng,
+created:Date.now()
+}
+);
+
+};
+
+onSnapshot(
+collection(db,"shelters"),
+snap=>{
+
+markers.forEach(m=>map.removeLayer(m));
+markers.length=0;
+
+snap.forEach(doc=>{
+
+const s=doc.data();
+
+const marker=L.marker(
+[s.lat,s.lng]
+)
+.addTo(map)
+.bindPopup(s.name);
+
+markers.push(marker);
+
+});
+
+}
+);
+
+window.locateUser=function(){
+
 navigator.geolocation.getCurrentPosition(pos=>{
+
 userLat=pos.coords.latitude;
 userLng=pos.coords.longitude;
 
-if(userMarker) map.removeLayer(userMarker);
+if(userMarker){
+map.removeLayer(userMarker);
+}
 
-userMarker=L.marker([userLat,userLng]).addTo(map)
-.bindPopup("現在地")
-.openPopup();
+userMarker=L.marker(
+[userLat,userLng]
+)
+.addTo(map)
+.bindPopup("現在地");
 
 map.setView([userLat,userLng],15);
 
-document.getElementById("info").innerHTML=
-"現在地取得完了";
 });
-}
+
+};
 
 function distance(lat1,lng1,lat2,lng2){
+
 const R=6371;
+
 const dLat=(lat2-lat1)*Math.PI/180;
 const dLng=(lng2-lng1)*Math.PI/180;
+
 const a=
 Math.sin(dLat/2)**2+
 Math.cos(lat1*Math.PI/180)*
 Math.cos(lat2*Math.PI/180)*
 Math.sin(dLng/2)**2;
-return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+
+return R*2*Math.atan2(
+Math.sqrt(a),
+Math.sqrt(1-a)
+);
+
 }
 
-function findNearest(){
+window.findNearest=function(){
 
-if(userLat===null){
-alert("現在地を取得してください");
-return;
-}
+if(userLat===null)return;
 
 let nearest=null;
 let min=999999;
 
-for(const s of shelters){
+markers.forEach(m=>{
+
+const p=m.getLatLng();
+
 const d=distance(
 userLat,
 userLng,
-s.lat,
-s.lng
+p.lat,
+p.lng
 );
 
 if(d<min){
 min=d;
-nearest=s;
+nearest=p;
 }
-}
+
+});
+
+if(!nearest)return;
 
 if(routeLine){
 map.removeLayer(routeLine);
@@ -147,18 +165,15 @@ weight:5
 }
 ).addTo(map);
 
-const walk=Math.round((min/5)*60);
+const walk=Math.round(min/5*60);
 
 document.getElementById("info").innerHTML=
-`
-最寄り避難所: ${nearest.name}<br>
-距離: ${min.toFixed(2)} km<br>
-徒歩予想: ${walk} 分
-`;
+"距離:"+min.toFixed(2)+"km<br>徒歩:"+walk+"分";
 
-map.fitBounds(routeLine.getBounds());
-}
+};
+
+document.getElementById("panel").insertAdjacentHTML(
+"beforeend",
+'<button onclick="addShelter()">避難所追加</button>'
+);
 </script>
-
-</body>
-</html>
